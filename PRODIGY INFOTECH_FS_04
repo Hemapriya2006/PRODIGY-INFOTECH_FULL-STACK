@@ -1,0 +1,349 @@
+app.py
+
+from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
+from werkzeug.utils import secure_filename
+from datetime import datetime
+import os
+
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = 'static/uploads'
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+chat_rooms = {
+    'general': [],
+    'tech': [],
+    'random': []
+}
+
+private_chats = {}
+
+@app.route('/')
+def select_room():
+    return render_template('room_select.html', rooms=list(chat_rooms.keys()))
+
+@app.route('/chat/<room_name>')
+def chat(room_name):
+    if room_name not in chat_rooms:
+        return "Room not found", 404
+    return render_template('chat.html', room=room_name)
+
+@app.route('/send/<room_name>', methods=['POST'])
+def send(room_name):
+    username = request.form.get('username')
+    message = request.form.get('message')
+    file_url = None
+    if 'file' in request.files:
+        file = request.files['file']
+        if file and file.filename:
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+            file_url = '/' + file_path.replace('\\', '/')
+
+    if username and (message or file_url) and room_name in chat_rooms:
+        chat_rooms[room_name].append({
+            'user': username,
+            'msg': message,
+            'file': file_url,
+            'time': datetime.now().strftime('%H:%M:%S')
+        })
+    return ('', 204)
+
+@app.route('/messages/<room_name>')
+def get_messages(room_name):
+    return jsonify(chat_rooms.get(room_name, []))
+
+@app.route('/private')
+def private_select():
+    return render_template('private_select.html')
+
+@app.route('/private_chat', methods=['POST'])
+def private_chat_redirect():
+    user1 = request.form.get('sender')
+    user2 = request.form.get('receiver')
+    if not user1 or not user2:
+        return "Both names required."
+    return redirect(url_for('private_chat', user1=user1, user2=user2))
+
+@app.route('/private_chat/<user1>/<user2>')
+def private_chat(user1, user2):
+    return render_template('private_chat.html', user1=user1, user2=user2)
+
+@app.route('/private_send/<user1>/<user2>', methods=['POST'])
+def private_send(user1, user2):
+    sender = request.form.get('sender')
+    message = request.form.get('message')
+    file_url = None
+    if 'file' in request.files:
+        file = request.files['file']
+        if file and file.filename:
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+            file_url = '/' + file_path.replace('\\', '/')
+
+    key = tuple(sorted([user1, user2]))
+    if key not in private_chats:
+        private_chats[key] = []
+    private_chats[key].append({
+        'user': sender,
+        'msg': message,
+        'file': file_url,
+        'time': datetime.now().strftime('%H:%M:%S')
+    })
+    return ('', 204)
+
+@app.route('/private_messages/<user1>/<user2>')
+def get_private_messages(user1, user2):
+    key = tuple(sorted([user1, user2]))
+    return jsonify(private_chats.get(key, []))
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+chat.html
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chat - {{ room }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="chat-container">
+    <h2>{{ room | capitalize }} Room</h2>
+    <div class="chat-box" id="chat-box"></div>
+
+    <form id="message-form" enctype="multipart/form-data">
+      <input type="text" name="username" placeholder="Your name" required>
+      <input type="text" name="message" placeholder="Type your message">
+      <input type="file" name="file">
+      <button type="submit">Send</button>
+    </form>
+
+    <a href="/">← Back to Rooms</a>
+  </div>
+
+  <script>
+    const room = "{{ room }}";
+
+    async function loadMessages() {
+      const res = await fetch(`/messages/${room}`);
+      const messages = await res.json();
+      const box = document.getElementById('chat-box');
+      box.innerHTML = '';
+      messages.forEach(msg => {
+        const p = document.createElement('p');
+        let text = `<strong>${msg.user} (${msg.time}):</strong> ${msg.msg || ''}`;
+        if (msg.file) {
+          text += ` <a href='${msg.file}' target='_blank'>📎 File</a>`;
+        }
+        p.innerHTML = text;
+        box.appendChild(p);
+      });
+      box.scrollTop = box.scrollHeight;
+    }
+
+    document.getElementById('message-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const formData = new FormData(e.target);
+      await fetch(`/send/${room}`, {
+        method: 'POST',
+        body: formData
+      });
+      e.target.reset();
+      loadMessages();
+    });
+
+    setInterval(loadMessages, 2000);
+    window.onload = loadMessages;
+  </script>
+</body>
+</html>
+
+private_chat.html
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Private Chat</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="chat-container">
+    <h2>Chat: {{ user1 }} ↔ {{ user2 }}</h2>
+    <div class="chat-box" id="chat-box"></div>
+
+    <form id="message-form" enctype="multipart/form-data">
+      <input type="hidden" name="sender" id="sender" value="{{ user1 }}">
+      <input type="text" name="message" id="message" placeholder="Enter message...">
+      <input type="file" name="file" id="file">
+      <button type="submit">Send</button>
+    </form>
+
+    <a href="/private">← Change users</a>
+  </div>
+
+  <script>
+    const user1 = "{{ user1 }}";
+    const user2 = "{{ user2 }}";
+
+    async function loadMessages() {
+      const res = await fetch(`/private_messages/${user1}/${user2}`);
+      const messages = await res.json();
+      const box = document.getElementById('chat-box');
+      box.innerHTML = '';
+      messages.forEach(msg => {
+        const p = document.createElement('p');
+        let text = `<strong>${msg.user} (${msg.time}):</strong> ${msg.msg || ''}`;
+        if (msg.file) {
+          text += ` <a href='${msg.file}' target='_blank'>📎 Download</a>`;
+        }
+        p.innerHTML = text;
+        box.appendChild(p);
+      });
+      box.scrollTop = box.scrollHeight;
+    }
+
+    document.getElementById('message-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const formData = new FormData(e.target);
+      await fetch(`/private_send/${user1}/${user2}`, {
+        method: 'POST',
+        body: formData
+      });
+      e.target.reset();
+      loadMessages();
+    });
+
+    setInterval(loadMessages, 2000);
+    window.onload = loadMessages;
+  </script>
+</body>
+</html>
+
+private_select.html
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Private Chat</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="chat-container">
+    <h2>Start Private Chat</h2>
+    <form action="/private_chat" method="POST">
+      <input type="text" name="sender" placeholder="Your name" required>
+      <input type="text" name="receiver" placeholder="Receiver name" required>
+      <button type="submit">Start Chat</button>
+    </form>
+    <a href="/">← Back to Rooms</a>
+  </div>
+</body>
+</html>
+
+room_select.html
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Select Chat Room</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="chat-container">
+    <h2>Select a Chat Room</h2>
+    <ul>
+      {% for room in rooms %}
+      <li><a href="/chat/{{ room }}">{{ room | capitalize }} Room</a></li>
+      {% endfor %}
+    </ul>
+    <a href="/private" class="btn">Start Private Chat</a>
+  </div>
+</body>
+</html>
+
+style.css
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', sans-serif;
+  background: linear-gradient(to right, #e0eafc, #cfdef3);
+}
+
+.chat-container {
+  max-width: 600px;
+  margin: 50px auto;
+  background: #fff;
+  padding: 25px 30px;
+  box-shadow: 0 0 15px rgba(0,0,0,0.1);
+  border-radius: 10px;
+}
+
+h2 {
+  text-align: center;
+  color: #333;
+}
+
+.chat-box {
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  background: #f9f9f9;
+  height: 300px;
+  overflow-y: scroll;
+  padding: 15px;
+  margin-bottom: 15px;
+}
+
+.chat-box p {
+  margin: 0 0 10px;
+}
+
+.chat-box p strong {
+  color: #007BFF;
+}
+
+input[type=text], input[type=file] {
+  padding: 10px;
+  width: calc(100% - 130px);
+  margin-bottom: 10px;
+  margin-right: 5px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+}
+
+button {
+  padding: 10px 20px;
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #218838;
+}
+
+a.btn {
+  display: inline-block;
+  background: #007bff;
+  color: white;
+  padding: 10px;
+  margin-top: 20px;
+  text-decoration: none;
+  border-radius: 5px;
+}
+
+a.btn:hover {
+  background: #0056b3;
+}
+
+form {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  align-items: center;
+}
