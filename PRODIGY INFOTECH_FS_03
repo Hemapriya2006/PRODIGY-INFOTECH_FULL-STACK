@@ -1,0 +1,364 @@
+app.py
+from flask import Flask, render_template, request, redirect, session, send_from_directory
+import sqlite3
+import os
+
+app = Flask(__name__)
+app.secret_key = 'supersecretkey'
+DB_NAME = 'store.db'
+
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        price REAL NOT NULL,
+        image TEXT)''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        password TEXT)''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        items TEXT,
+        status TEXT DEFAULT 'Pending')''')
+
+    c.execute("SELECT COUNT(*) FROM products")
+    if c.fetchone()[0] == 0:
+        sample_products = [
+            ('Tomatoes', 'Fresh farm tomatoes', 50, 'https://i.pinimg.com/originals/45/71/19/45711976c253c2921d003cec734924fc.jpg'),
+            ('Potatoes', 'Organic potatoes', 60, 'https://th.bing.com/th/id/OIP.DzclylAWd2UpLdjluKCX9AHaE8?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Milk', 'Full cream milk', 55, 'https://th.bing.com/th/id/OIP.wwsEu3uHsyhhIVAPoU1jUQHaLa?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Bread', 'Whole grain bread', 40, 'https://th.bing.com/th/id/OIP.AtHHbXB2iUZq5P7v4O5YkwHaFs?o=7rm=3&rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Eggs', 'Farm fresh eggs (12 pcs)', 70, 'https://admin115421-prod.s3.ap-southeast-2.amazonaws.com/public/product-vhwJidmini0P7ufJ_yI7Y-0.jpg'),
+            ('Rice', 'Basmati rice 1kg', 110, 'https://cdn0.woolworths.media/content/wowproductimages/large/231636.jpg'),
+            ('Cheese', 'Cheddar cheese block', 150, 'https://th.bing.com/th/id/OIP.At_qmKyMzfeOyKnktuxIEwHaHa?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Apples', 'Juicy apples', 100.0, 'https://th.bing.com/th/id/OIP.GaOmOkWNRaiZaUrGjOxVmgHaFW?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Carrots', 'Crunchy orange carrots', 45.0, 'https://th.bing.com/th/id/OIP.IXjHR1VEPIRJBxsYzYybFAHaFI?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Bananas', 'Yellow ripe bananas - dozen', 50.0, 'https://th.bing.com/th/id/OIP.7R5RNaBqRAPV9AClEVlJ9AHaH0?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Oranges', 'Fresh juicy oranges', 80.0, 'https://th.bing.com/th/id/OIP.MdUL0puWMJRXQ7KoWfpxsAHaHa?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Paneer', 'Homemade soft paneer', 120.0, 'https://th.bing.com/th/id/OIP.fr2anCxVujtlyGHep5SpIgHaE8?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Spinach', 'Fresh green spinach bunch', 30.0, 'https://th.bing.com/th/id/OIP.k_Rq6hI1QJkQew22G2gq0QHaHa?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Butter', 'Salted butter pack', 90.0, 'https://th.bing.com/th/id/OIP.SjsSrYW7v08ISAlKQFvQpAHaHa?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Sugar', 'White sugar - 1kg', 45.0, 'https://th.bing.com/th/id/OIP.LzmpBa0Tw2H6gqySW_J8igHaLK?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Cucumber', 'Fresh cucumbers - 1kg', 35.0, 'https://th.bing.com/th/id/OIP.Jcq9Perv95GscKAuKA9kBgHaE6?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Lettuce', 'Crisp iceberg lettuce', 25.0, 'https://img.freepik.com/premium-photo/head-crisp-iceberg-lettuce_925062-276.jpg?w=2000'),
+            ('Mangoes', 'Sweet Alphonso mangoes - 1kg', 150.0, 'https://tiimg.tistatic.com/fp/1/008/536/100-organic-farm-fresh-a-grade-sweet-alphonso-mango-358.jpg'),
+            ('Grapes', 'Green seedless grapes - 1kg', 90.0, 'https://th.bing.com/th/id/R.49a48189b37952adb99937a7978369ab?rik=ilZZiSRHcAV0Pw&riu=http%3a%2f%2fspecialtyproduce.com%2fsppics%2f1224.png&ehk=o9yH7oGBzT3J9dYA02GKEXH3NATZcIIWlRS4wKeZCIQ%3d&risl=&pid=ImgRaw&r=0'),
+            ('Coconut Oil', 'Pure cold-pressed coconut oil - 500ml', 130.0, 'https://down-my.img.susercontent.com/file/my-11134207-7r98r-lwkvr0xqys1c17'),
+            ('Wheat Flour', 'Stone-ground wheat flour - 1kg', 60.0, 'https://theyaadhum.com/wp-content/uploads/2021/09/stoneground.jpg'),
+            ('Lentils', 'Yellow moong dal - 1kg', 85.0, 'https://th.bing.com/th/id/OIP.EBipO5E9WH86Stav3NrgvAHaIm?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3'),
+            ('Detergent', 'Washing powder - 1kg', 95.0, 'https://rukminim1.flixcart.com/image/832/832/kmp7ngw0/washing-powder/w/i/g/1-perfect-wash-detergent-powder-1kg-ariel-original-imagfjp5xrryugcz.jpeg?q=70'),
+            ('Shampoo', 'Herbal anti-dandruff shampoo - 200ml', 120.0, 'https://www.drrxpharmacy.com/pub/media/iopt/catalog/product/cache/f8eaa364d4251659322b3280a62db26d/a/n/anti-dandruff-shampoo_1.webp'),
+            ('Toothpaste', 'Fluoride toothpaste - 100g', 45.0, 'https://th.bing.com/th/id/OIP.5LCqm2ujufrKJq0Yyhw7AwAAAA?rs=1&pid=ImgDetMain&cb=idpwebp2&o=7&rm=3')
+        ]
+        c.executemany("INSERT INTO products (name, description, price, image) VALUES (?, ?, ?, ?)", sample_products)
+
+    conn.commit()
+    conn.close()
+
+@app.route('/')
+def home():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT * FROM products")
+    products = c.fetchall()
+    conn.close()
+    return render_template('index.html', products=products)
+
+@app.route('/add_to_cart/<int:product_id>')
+def add_to_cart(product_id):
+    try:
+        cart = session.get('cart', [])
+        cart.append(product_id)
+        session['cart'] = cart
+        print("Cart updated:", session['cart'])  # Debugging line
+        return redirect('/')
+    except Exception as e:
+        return f"Error adding to cart: {str(e)}"
+
+@app.route('/cart')
+def cart():
+    if 'cart' not in session or not session['cart']:
+        return render_template('cart.html', items=[], total=0)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    items = []
+    total = 0
+    for pid in session['cart']:
+        c.execute("SELECT * FROM products WHERE id = ?", (pid,))
+        item = c.fetchone()
+        if item:
+            items.append(item)
+            total += item[3]
+    conn.close()
+    return render_template('cart.html', items=items, total=total)
+
+@app.route('/place_order')
+def place_order():
+    if 'user_id' not in session:
+        return redirect('/login')
+    if 'cart' not in session or not session['cart']:
+        return redirect('/cart')
+    items_str = ','.join(map(str, session['cart']))
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("INSERT INTO orders (user_id, items) VALUES (?, ?)", (session['user_id'], items_str))
+    conn.commit()
+    order_id = c.lastrowid
+    session.pop('cart', None)
+    conn.close()
+    return render_template('order_placed.html', order_id=order_id)
+
+@app.route('/track_order', methods=['GET', 'POST'])
+def track_order():
+    if request.method == 'POST':
+        order_id = request.form['order_id']
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT status FROM orders WHERE id = ?", (order_id,))
+        order = c.fetchone()
+        conn.close()
+        if order:
+            return render_template('track_order.html', status=order[0], order_id=order_id)
+        return render_template('track_order.html', error="Order not found")
+    return render_template('track_order.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, password))
+        user = c.fetchone()
+        conn.close()
+        if user:
+            session['user_id'] = user[0]
+            return redirect('/')
+        return 'Invalid login'
+    return render_template('login.html')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+            conn.commit()
+        except:
+            return 'Username already exists'
+        conn.close()
+        return redirect('/login')
+    return render_template('register.html')
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('static', filename)
+
+if __name__ == '__main__':
+    init_db()
+    app.run(debug=True)
+
+cart.html
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cart</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header><h2>Your Cart </h2></header>
+<div class="container">
+    {% if items %}
+        <ul>
+            {% for item in items %}
+                <li>{{ item[1] }} - ₹{{ item[3] }}</li>
+            {% endfor %}
+        </ul>
+        <p><strong>Total:</strong> ₹{{ total }}</p>
+        <a class="button" href="/place_order"> Place Order</a>
+    {% else %}
+        <p>Your cart is empty.</p>
+    {% endif %}
+</div>
+</body>
+</html>
+
+index.html
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Home - Local Store</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+    <h1>Local Store </h1>
+    <nav>
+        <a href="/">Home</a> |
+        <a href="/cart">Cart</a> |
+        <a href="/track_order">Track Order</a> |
+        <a href="/login">Login</a> |
+        <a href="/register">Register</a>
+    </nav>
+</header>
+
+<div class="container">
+    <div class="product-list">
+        {% for product in products %}
+        <div class="product">
+            <img src="{{ product[4] }}" alt="Image">
+            <h3>{{ product[1] }}</h3>
+            <p>{{ product[2] }}</p>
+            <p>₹{{ product[3] }}</p>
+            <a class="button" href="/add_to_cart/{{ product[0] }}">Add to Cart</a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+</body>
+</html>
+
+login.html
+
+<!DOCTYPE html>
+<html>
+<head><title>Login</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header><h2>Login</h2></header>
+<div class="container">
+<form method="POST">
+    Username: <input type="text" name="username" required><br>
+    Password: <input type="password" name="password" required><br>
+    <button>Login</button>
+</form>
+</div>
+</body>
+</html>
+
+order_placed.html
+
+<!DOCTYPE html>
+<html>
+<head><title>Order Placed</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<div class="container">
+    <h2> Order Placed!</h2>
+    <p>Your order ID is <strong>{{ order_id }}</strong></p>
+    <a href="/">Back to Home</a>
+</div>
+</body>
+</html>
+
+register.html
+
+<!DOCTYPE html>
+<html>
+<head><title>Register</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header><h2>Register</h2></header>
+<div class="container">
+<form method="POST">
+    Username: <input type="text" name="username" required><br>
+    Password: <input type="password" name="password" required><br>
+    <button>Register</button>
+</form>
+</div>
+</body>
+</html>
+
+track_order.html
+
+<!DOCTYPE html>
+<html>
+<head><title>Track Order</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<div class="container">
+    <h2>Track Order </h2>
+    <form method="POST">
+        Enter Order ID: <input type="text" name="order_id">
+        <button type="submit">Track</button>
+    </form>
+    {% if status %}
+        <p>Status: <strong>{{ status }}</strong></p>
+    {% elif error %}
+        <p style="color:red">{{ error }}</p>
+    {% endif %}
+</div>
+</body>
+</html>
+
+style.css
+
+body {
+    font-family: Arial, sans-serif;
+    background: #f8f9fa;
+    margin: 0;
+    padding: 0;
+}
+
+header {
+    background: #343a40;
+    color: white;
+    padding: 15px;
+    text-align: center;
+}
+
+nav a {
+    color: white;
+    margin: 0 10px;
+    text-decoration: none;
+}
+
+.container {
+    padding: 20px;
+}
+
+.product-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: center;
+}
+
+.product {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px;
+    width: 200px;
+    text-align: center;
+}
+
+.product img {
+    width: 100%;
+    height: auto;
+    border-radius: 4px;
+}
+
+.button, button {
+    background: #28a745;
+    color: white;
+    padding: 8px 12px;
+    text-decoration: none;
+    border: none;
+    border-radius: 4px;
+    display: inline-block;
+    margin-top: 10px;
+}
+
+.button:hover, button:hover {
+    background: #218838;
+}
